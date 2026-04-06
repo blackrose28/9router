@@ -25,6 +25,10 @@ export default function ProviderDetailPage() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showEditNodeModal, setShowEditNodeModal] = useState(false);
   const [showBulkProxyModal, setShowBulkProxyModal] = useState(false);
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importJson, setImportJson] = useState("");
+  const [importError, setImportError] = useState("");
+  const [importLoading, setImportLoading] = useState(false);
   const [selectedConnection, setSelectedConnection] = useState(null);
   const [modelAliases, setModelAliases] = useState({});
   const [headerImgError, setHeaderImgError] = useState(false);
@@ -256,6 +260,31 @@ export default function ProviderDetailPage() {
   const handleOAuthSuccess = () => {
     fetchConnections();
     setShowOAuthModal(false);
+  };
+
+  const handleImportSubmit = async () => {
+    setImportError("");
+    setImportLoading(true);
+    try {
+      const authJson = JSON.parse(importJson);
+      if (!authJson.tokens?.access_token || !authJson.tokens?.refresh_token) {
+        throw new Error("Missing access_token or refresh_token in tokens");
+      }
+      const res = await fetch(`/api/oauth/codex/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(authJson),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Import failed");
+      await fetchConnections();
+      setShowImportModal(false);
+      setImportJson("");
+    } catch (err) {
+      setImportError(err.message);
+    } finally {
+      setImportLoading(false);
+    }
   };
 
   const handleIFlowCookieSuccess = () => {
@@ -862,6 +891,11 @@ export default function ProviderDetailPage() {
                       Cookie Auth
                     </Button>
                   )}
+                  {providerId === "codex" && (
+                    <Button icon="upload" variant="secondary" onClick={() => setShowImportModal(true)}>
+                      Import auth.json
+                    </Button>
+                  )}
                   <Button icon="add" onClick={() => isOAuth ? setShowOAuthModal(true) : setShowAddApiKeyModal(true)}>
                     {providerId === "iflow" ? "OAuth" : "Add Connection"}
                   </Button>
@@ -882,6 +916,17 @@ export default function ProviderDetailPage() {
                       title="Add connection using browser cookie"
                     >
                       Cookie
+                    </Button>
+                  )}
+                  {providerId === "codex" && (
+                    <Button
+                      size="sm"
+                      icon="upload"
+                      variant="secondary"
+                      onClick={() => setShowImportModal(true)}
+                      title="Import from Codex CLI auth.json"
+                    >
+                      Import
                     </Button>
                   )}
                   <Button
@@ -942,6 +987,37 @@ export default function ProviderDetailPage() {
           onSuccess={handleOAuthSuccess}
           onClose={() => setShowOAuthModal(false)}
         />
+      )}
+      {providerId === "codex" && (
+        <Modal
+          isOpen={showImportModal}
+          onClose={() => { setShowImportModal(false); setImportJson(""); setImportError(""); }}
+          title="Import Codex auth.json"
+          size="lg"
+        >
+          <div className="flex flex-col gap-4">
+            <p className="text-sm text-text-muted">
+              Paste the contents of your Codex CLI <code className="text-xs bg-sidebar px-1.5 py-0.5 rounded">~/.codex/auth.json</code> file below.
+            </p>
+            <textarea
+              value={importJson}
+              onChange={(e) => { setImportJson(e.target.value); setImportError(""); }}
+              placeholder='{"auth_mode": "chatgpt", "tokens": { "access_token": "...", "refresh_token": "..." }}'
+              className="w-full h-48 px-3 py-2 rounded-lg border border-black/10 dark:border-white/10 bg-sidebar text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
+            />
+            {importError && (
+              <p className="text-xs text-red-500">{importError}</p>
+            )}
+            <div className="flex gap-2">
+              <Button onClick={handleImportSubmit} fullWidth disabled={!importJson.trim() || importLoading}>
+                {importLoading ? "Importing..." : "Import"}
+              </Button>
+              <Button onClick={() => { setShowImportModal(false); setImportJson(""); setImportError(""); }} variant="ghost" fullWidth>
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </Modal>
       )}
       {providerId === "iflow" && (
         <IFlowCookieModal
