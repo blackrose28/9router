@@ -32,9 +32,11 @@ export async function POST(request) {
       );
     }
 
-    // Decode id_token JWT payload to extract email & display name
+    // Decode id_token JWT payload to extract email, display name & org info
     let email = null;
     let displayName = null;
+    let orgTitle = null;
+    let planType = null;
     if (tokens.id_token) {
       try {
         const parts = tokens.id_token.split(".");
@@ -43,6 +45,21 @@ export async function POST(request) {
         );
         email = payload.email || null;
         displayName = payload.name || null;
+
+        // Extract org/team info for multi-team disambiguation
+        const authClaims = payload["https://api.openai.com/auth"];
+        if (authClaims) {
+          planType = authClaims.chatgpt_plan_type || null;
+          const orgs = authClaims.organizations;
+          if (Array.isArray(orgs) && orgs.length > 0) {
+            orgTitle = orgs[0].title || null;
+          }
+        }
+
+        // Annotate display name with org title for multi-team visibility
+        if (displayName && orgTitle) {
+          displayName = `${displayName} (${orgTitle})`;
+        }
       } catch {
         // id_token decode failed — continue without user info
       }
@@ -70,6 +87,8 @@ export async function POST(request) {
     if (tokens.account_id) providerSpecificData.accountId = tokens.account_id;
     if (auth_mode) providerSpecificData.authMode = auth_mode;
     if (OPENAI_API_KEY) providerSpecificData.apiKey = OPENAI_API_KEY;
+    if (orgTitle) providerSpecificData.orgTitle = orgTitle;
+    if (planType) providerSpecificData.planType = planType;
 
     // Save to database
     const connection = await createProviderConnection({
