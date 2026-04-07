@@ -266,14 +266,24 @@ export default function ProviderDetailPage() {
     setImportError("");
     setImportLoading(true);
     try {
-      const authJson = JSON.parse(importJson);
-      if (!authJson.tokens?.access_token || !authJson.tokens?.refresh_token) {
-        throw new Error("Missing access_token or refresh_token in tokens");
+      const parsed = JSON.parse(importJson);
+
+      // Validate based on provider
+      if (providerId === "codex") {
+        if (!parsed.tokens?.access_token || !parsed.tokens?.refresh_token) {
+          throw new Error("Missing access_token or refresh_token in tokens");
+        }
+      } else if (providerId === "claude") {
+        const oauthData = parsed.claudeAiOauth || parsed;
+        if (!oauthData.accessToken || !oauthData.refreshToken) {
+          throw new Error("Missing accessToken or refreshToken");
+        }
       }
-      const res = await fetch(`/api/oauth/codex/import`, {
+
+      const res = await fetch(`/api/oauth/${providerId}/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(authJson),
+        body: JSON.stringify(parsed),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Import failed");
@@ -891,9 +901,9 @@ export default function ProviderDetailPage() {
                       Cookie Auth
                     </Button>
                   )}
-                  {providerId === "codex" && (
+                  {(providerId === "codex" || providerId === "claude") && (
                     <Button icon="upload" variant="secondary" onClick={() => setShowImportModal(true)}>
-                      Import auth.json
+                      {providerId === "codex" ? "Import auth.json" : "Import Credentials"}
                     </Button>
                   )}
                   <Button icon="add" onClick={() => isOAuth ? setShowOAuthModal(true) : setShowAddApiKeyModal(true)}>
@@ -918,13 +928,13 @@ export default function ProviderDetailPage() {
                       Cookie
                     </Button>
                   )}
-                  {providerId === "codex" && (
+                  {(providerId === "codex" || providerId === "claude") && (
                     <Button
                       size="sm"
                       icon="upload"
                       variant="secondary"
                       onClick={() => setShowImportModal(true)}
-                      title="Import from Codex CLI auth.json"
+                      title={providerId === "codex" ? "Import from Codex CLI auth.json" : "Import Claude Code credentials"}
                     >
                       Import
                     </Button>
@@ -988,21 +998,28 @@ export default function ProviderDetailPage() {
           onClose={() => setShowOAuthModal(false)}
         />
       )}
-      {providerId === "codex" && (
+      {(providerId === "codex" || providerId === "claude") && (
         <Modal
           isOpen={showImportModal}
           onClose={() => { setShowImportModal(false); setImportJson(""); setImportError(""); }}
-          title="Import Codex auth.json"
+          title={providerId === "codex" ? "Import Codex auth.json" : "Import Claude Code Credentials"}
           size="lg"
         >
           <div className="flex flex-col gap-4">
             <p className="text-sm text-text-muted">
-              Paste the contents of your Codex CLI <code className="text-xs bg-sidebar px-1.5 py-0.5 rounded">~/.codex/auth.json</code> file below.
+              {providerId === "codex" ? (
+                <>Paste the contents of your Codex CLI <code className="text-xs bg-sidebar px-1.5 py-0.5 rounded">~/.codex/auth.json</code> file below.</>
+              ) : (
+                <>Paste your Claude Code OAuth credentials JSON below. You can find this in your Claude Code config or extract it from the Claude Code extension storage.</>
+              )}
             </p>
             <textarea
               value={importJson}
               onChange={(e) => { setImportJson(e.target.value); setImportError(""); }}
-              placeholder='{"auth_mode": "chatgpt", "tokens": { "access_token": "...", "refresh_token": "..." }}'
+              placeholder={providerId === "codex"
+                ? '{"auth_mode": "chatgpt", "tokens": { "access_token": "...", "refresh_token": "..." }}'
+                : '{"claudeAiOauth": { "accessToken": "sk-ant-oat01-...", "refreshToken": "sk-ant-ort01-...", "expiresAt": ... }}'
+              }
               className="w-full h-48 px-3 py-2 rounded-lg border border-black/10 dark:border-white/10 bg-sidebar text-sm font-mono resize-none focus:outline-none focus:ring-2 focus:ring-primary/30"
             />
             {importError && (
