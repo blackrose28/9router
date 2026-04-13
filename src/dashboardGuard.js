@@ -69,29 +69,46 @@ export async function proxy(request) {
   }
 
 
+
   // Protect all dashboard routes
   if (pathname.startsWith("/dashboard")) {
-    const token = request.cookies.get("auth_token")?.value;
+    const origin = request.nextUrl.origin;
+    let requireLogin = true;
+    let tunnelDashboardAccess = false;
 
+    try {
+      const res = await fetch(`${origin}/api/settings/require-login`);
+      const data = await res.json();
+      requireLogin = data.requireLogin !== false;
+      tunnelDashboardAccess = data.tunnelDashboardAccess === true;
+
+      // Block tunnel/tailscale access if disabled (redirect to login)
+      if (!tunnelDashboardAccess) {
+        const host = (request.headers.get("host") || "").split(":")[0].toLowerCase();
+        const tunnelHost = data.tunnelUrl ? new URL(data.tunnelUrl).hostname.toLowerCase() : "";
+        const tailscaleHost = data.tailscaleUrl ? new URL(data.tailscaleUrl).hostname.toLowerCase() : "";
+        if ((tunnelHost && host === tunnelHost) || (tailscaleHost && host === tailscaleHost)) {
+          return NextResponse.redirect(new URL("/login", request.url));
+        }
+      }
+    } catch {
+      // On error, keep defaults (require login, block tunnel)
+    }
+
+    // If login not required, allow through
+    if (!requireLogin) return NextResponse.next();
+
+    // Verify JWT token
+    const token = request.cookies.get("auth_token")?.value;
     if (token) {
       try {
         await jwtVerify(token, SECRET);
         return NextResponse.next();
-      } catch (err) {
+      } catch {
         return NextResponse.redirect(new URL("/login", request.url));
       }
     }
 
-    const origin = request.nextUrl.origin;
-    try {
-      const res = await fetch(`${origin}/api/settings/require-login`);
-      const data = await res.json();
-      if (data.requireLogin === false) {
-        return NextResponse.next();
-      }
-    } catch (err) {
-      // On error, require login
-    }
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

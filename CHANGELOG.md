@@ -1,3 +1,23 @@
+# v0.3.87 (2026-04-13)
+
+## Fixes
+- Fix codex cache session id
+
+# v0.3.86 (2026-04-13)
+
+## Features
+- Add provider models and thinking configurations for enhanced chat handling
+- Add Vercel relay support to proxy functionality
+- Add Vercel deploy endpoint for proxy pools management
+
+## Improvements
+- Enhance proxy functionality with new relay capabilities
+- Streamline GitHub Actions Docker publish workflow
+- Update Docker configuration and package management
+
+## Fixes
+- Remove obsolete 9remote installation/management APIs
+
 # v0.3.83 (2026-04-08)
 
 ## Fixes
