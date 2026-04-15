@@ -93,6 +93,34 @@ function toExpiresAt(expiresIn) {
 }
 
 /**
+ * Parse expiresAt supporting ISO strings, epoch seconds/ms, and numeric strings.
+ * @param {string|number|null|undefined} value
+ * @returns {number|null} epoch ms
+ */
+function parseExpiresAt(value) {
+  if (value == null || value === "") return null;
+
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return value < 1e12 ? value * 1000 : value;
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (!trimmed) return null;
+
+    const asNumber = Number(trimmed);
+    if (Number.isFinite(asNumber)) {
+      return asNumber < 1e12 ? asNumber * 1000 : asNumber;
+    }
+
+    const parsed = new Date(trimmed).getTime();
+    return Number.isNaN(parsed) ? null : parsed;
+  }
+
+  return null;
+}
+
+/**
  * Providers that carry a real Google project ID.
  * @param {string} provider
  * @returns {boolean}
@@ -192,40 +220,47 @@ export async function checkAndRefreshToken(provider, credentials) {
 
   // ── 1. Regular access-token expiry ────────────────────────────────────────
   if (creds.expiresAt) {
-    const expiresAt = new Date(creds.expiresAt).getTime();
-    const now       = Date.now();
-    const remaining = expiresAt - now;
-
-    if (remaining < TOKEN_EXPIRY_BUFFER_MS) {
-      log.info("TOKEN_REFRESH", "Token expiring soon, refreshing proactively", {
+    const expiresAt = parseExpiresAt(creds.expiresAt);
+    if (!expiresAt) {
+      log.debug("TOKEN_REFRESH", "Skipping proactive refresh due to invalid expiresAt", {
         provider,
-        expiresIn: Math.round(remaining / 1000),
+        connectionId: creds.connectionId,
       });
+    } else {
+      const now       = Date.now();
+      const remaining = expiresAt - now;
 
-      const newCreds = await getAccessToken(provider, creds);
-      if (newCreds?.accessToken) {
-        const mergedCreds = {
-          ...newCreds,
-          existingProviderSpecificData: creds.providerSpecificData,
-        };
+      if (remaining < TOKEN_EXPIRY_BUFFER_MS) {
+        log.info("TOKEN_REFRESH", "Token expiring soon, refreshing proactively", {
+          provider,
+          expiresIn: Math.round(remaining / 1000),
+        });
 
-        // Persist to DB (non-blocking path continues below)
-        await updateProviderCredentials(creds.connectionId, mergedCreds);
+        const newCreds = await getAccessToken(provider, creds);
+        if (newCreds?.accessToken) {
+          const mergedCreds = {
+            ...newCreds,
+            existingProviderSpecificData: creds.providerSpecificData,
+          };
 
-        creds = {
-          ...creds,
-          accessToken:  newCreds.accessToken,
-          refreshToken: newCreds.refreshToken ?? creds.refreshToken,
-          providerSpecificData: newCreds.providerSpecificData
-            ? { ...creds.providerSpecificData, ...newCreds.providerSpecificData }
-            : creds.providerSpecificData,
-          expiresAt:    newCreds.expiresIn
-            ? toExpiresAt(newCreds.expiresIn)
-            : creds.expiresAt,
-        };
+          // Persist to DB (non-blocking path continues below)
+          await updateProviderCredentials(creds.connectionId, mergedCreds);
 
-        // Non-blocking: refresh projectId with the new access token
-        _refreshProjectId(provider, creds.connectionId, creds.accessToken);
+          creds = {
+            ...creds,
+            accessToken:  newCreds.accessToken,
+            refreshToken: newCreds.refreshToken ?? creds.refreshToken,
+            providerSpecificData: newCreds.providerSpecificData
+              ? { ...creds.providerSpecificData, ...newCreds.providerSpecificData }
+              : creds.providerSpecificData,
+            expiresAt:    newCreds.expiresIn
+              ? toExpiresAt(newCreds.expiresIn)
+              : creds.expiresAt,
+          };
+
+          // Non-blocking: refresh projectId with the new access token
+          _refreshProjectId(provider, creds.connectionId, creds.accessToken);
+        }
       }
     }
   }

@@ -12,34 +12,13 @@ export function getQuotaCooldown(backoffLevel = 0) {
 }
 
 /**
- * Check if error indicates quota exhaustion (not just rate limiting)
- * OpenAI/Codex quota errors have specific patterns
- * @param {string} errorText - Error message text
- * @returns {boolean}
- */
-function isQuotaExhaustedError(errorText) {
-  if (!errorText) return false;
-  const lowerError = typeof errorText === "string" ? errorText.toLowerCase() : JSON.stringify(errorText).toLowerCase();
-  
-  // OpenAI/Codex specific quota exhaustion patterns
-  return (
-    lowerError.includes("exceeded your current quota") ||
-    lowerError.includes("insufficient_quota") ||
-    lowerError.includes("billing details") ||
-    lowerError.includes("quota has been exceeded") ||
-    lowerError.includes("usage limit")
-  );
-}
-
-/**
  * Check if error should trigger account fallback (switch to next account)
  * @param {number} status - HTTP status code
  * @param {string} errorText - Error message text
  * @param {number} backoffLevel - Current backoff level for exponential backoff
- * @param {number|null} retryAfterMs - Optional retry-after time from headers (milliseconds)
  * @returns {{ shouldFallback: boolean, cooldownMs: number, newBackoffLevel?: number }}
  */
-export function checkFallbackError(status, errorText, backoffLevel = 0, retryAfterMs = null) {
+export function checkFallbackError(status, errorText, backoffLevel = 0) {
   // Check error message FIRST - specific patterns take priority over status codes
   if (errorText) {
     const errorStr = typeof errorText === "string" ? errorText : JSON.stringify(errorText);
@@ -59,34 +38,14 @@ export function checkFallbackError(status, errorText, backoffLevel = 0, retryAft
       return { shouldFallback: true, cooldownMs: COOLDOWN_MS.paymentRequired };
     }
 
-    // Check for quota exhaustion BEFORE general rate limit check
-    // Quota exhaustion needs much longer cooldown (use actual reset time from headers)
-    if (isQuotaExhaustedError(errorStr)) {
-      // Use actual reset time from headers if available, otherwise fallback to 6 hours
-      const cooldown = retryAfterMs || COOLDOWN_MS.quotaExhausted;
-      return {
-        shouldFallback: true,
-        cooldownMs: cooldown,
-        newBackoffLevel: 0  // Reset backoff level since this is quota, not rate limit
-      };
-    }
-
-    // Rate limit keywords - exponential backoff (for temporary rate limits, not quota)
+    // Rate limit keywords - exponential backoff
     if (
       lowerError.includes("rate limit") ||
       lowerError.includes("too many requests") ||
+      lowerError.includes("quota exceeded") ||
       lowerError.includes("capacity") ||
       lowerError.includes("overloaded")
     ) {
-      // Use actual reset time from headers if available, otherwise use exponential backoff
-      if (retryAfterMs) {
-        return {
-          shouldFallback: true,
-          cooldownMs: retryAfterMs,
-          newBackoffLevel: 0  // Reset since we have exact time
-        };
-      }
-      
       const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
       return {
         shouldFallback: true,
@@ -100,18 +59,7 @@ export function checkFallbackError(status, errorText, backoffLevel = 0, retryAft
     return { shouldFallback: true, cooldownMs: COOLDOWN_MS.unauthorized };
   }
 
-  // 403 Forbidden - check if it's quota exhaustion
-  if (status === HTTP_STATUS.FORBIDDEN) {
-    // If error message indicates quota exhaustion, use actual reset time or long cooldown
-    if (isQuotaExhaustedError(errorText)) {
-      const cooldown = retryAfterMs || COOLDOWN_MS.quotaExhausted;
-      return { shouldFallback: true, cooldownMs: cooldown };
-    }
-    // Otherwise treat as payment required
-    return { shouldFallback: true, cooldownMs: COOLDOWN_MS.paymentRequired };
-  }
-
-  if (status === HTTP_STATUS.PAYMENT_REQUIRED) {
+  if (status === HTTP_STATUS.PAYMENT_REQUIRED || status === HTTP_STATUS.FORBIDDEN) {
     return { shouldFallback: true, cooldownMs: COOLDOWN_MS.paymentRequired };
   }
 
@@ -119,24 +67,8 @@ export function checkFallbackError(status, errorText, backoffLevel = 0, retryAft
     return { shouldFallback: true, cooldownMs: COOLDOWN_MS.notFound };
   }
 
-  // 429 - Rate limit - check if it's quota exhaustion or temporary rate limit
+  // 429 - Rate limit with exponential backoff
   if (status === HTTP_STATUS.RATE_LIMITED) {
-    // If error message indicates quota exhaustion, use actual reset time or long cooldown
-    if (isQuotaExhaustedError(errorText)) {
-      const cooldown = retryAfterMs || COOLDOWN_MS.quotaExhausted;
-      return { shouldFallback: true, cooldownMs: cooldown };
-    }
-    
-    // Use actual reset time from headers if available, otherwise exponential backoff
-    if (retryAfterMs) {
-      return {
-        shouldFallback: true,
-        cooldownMs: retryAfterMs,
-        newBackoffLevel: 0  // Reset since we have exact time
-      };
-    }
-    
-    // Otherwise use exponential backoff for temporary rate limits
     const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
     return {
       shouldFallback: true,
@@ -153,11 +85,6 @@ export function checkFallbackError(status, errorText, backoffLevel = 0, retryAft
   ];
   if (transientStatuses.includes(status)) {
     return { shouldFallback: true, cooldownMs: COOLDOWN_MS.transient };
-  }
-
-  // Unknown client errors are usually request-shape issues; switching accounts won't help.
-  if (status >= 400 && status < 500) {
-    return { shouldFallback: false, cooldownMs: 0 };
   }
 
   // All other errors - fallback with transient cooldown
@@ -312,14 +239,13 @@ export function resetAccountState(account) {
  * @param {object} account - Account object
  * @param {number} status - HTTP status code
  * @param {string} errorText - Error message
- * @param {number|null} retryAfterMs - Optional retry-after time from headers
  * @returns {object} Updated account with error state
  */
-export function applyErrorState(account, status, errorText, retryAfterMs = null) {
+export function applyErrorState(account, status, errorText) {
   if (!account) return account;
 
   const backoffLevel = account.backoffLevel || 0;
-  const { cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel, retryAfterMs);
+  const { cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel);
 
   return {
     ...account,

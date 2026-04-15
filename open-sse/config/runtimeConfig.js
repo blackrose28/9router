@@ -87,6 +87,7 @@ export const COOLDOWN_MS = {
   notFound: 2 * 60 * 1000,
   transient: 30 * 1000,
   requestNotAllowed: 5 * 1000,
+  quotaExhausted: 6 * 60 * 60 * 1000,  // 6 hours for quota exhaustion (covers 5h rolling window + buffer)
   // Legacy aliases
   rateLimit: 2 * 60 * 1000,
   serviceUnavailable: 2 * 1000,

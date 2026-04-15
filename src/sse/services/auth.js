@@ -63,10 +63,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
     if (availableConnections.length === 0) {
       // Find earliest lock expiry across all connections for retry timing
       const lockedConns = connections.filter(c => isModelLockActive(c, model));
-      const expiries = lockedConns.map(c => getEarliestModelLockUntil(c)).filter(Boolean);
-      const earliest = expiries.sort()[0] || null;
+      const withExpiry = lockedConns
+        .map(c => ({ conn: c, expiry: getEarliestModelLockUntil(c) }))
+        .filter(item => !!item.expiry)
+        .sort((a, b) => new Date(a.expiry).getTime() - new Date(b.expiry).getTime());
+      const earliest = withExpiry[0]?.expiry || null;
       if (earliest) {
-        const earliestConn = lockedConns[0];
+        const earliestConn = withExpiry[0]?.conn || null;
         log.warn("AUTH", `${provider} | all ${connections.length} accounts locked for ${model || "all"} (${formatRetryAfter(earliest)}) | lastError=${earliestConn?.lastError?.slice(0, 50)}`);
         return {
           allRateLimited: true,
@@ -169,13 +172,13 @@ export async function getProviderCredentials(provider, excludeConnectionIds = nu
  * @param {string|null} model - The specific model that triggered the error
  * @returns {{ shouldFallback: boolean, cooldownMs: number }}
  */
-export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null) {
+export async function markAccountUnavailable(connectionId, status, errorText, provider = null, model = null, retryAfterMs = null) {
   if (!connectionId || connectionId === "noauth") return { shouldFallback: false, cooldownMs: 0 };
   const connections = await getProviderConnections({ provider });
   const conn = connections.find(c => c.id === connectionId);
   const backoffLevel = conn?.backoffLevel || 0;
 
-  const { shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel);
+  const { shouldFallback, cooldownMs, newBackoffLevel } = checkFallbackError(status, errorText, backoffLevel, retryAfterMs);
   if (!shouldFallback) return { shouldFallback: false, cooldownMs: 0 };
 
   const reason = typeof errorText === "string" ? errorText.slice(0, 100) : "Provider error";

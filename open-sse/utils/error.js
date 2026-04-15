@@ -86,9 +86,74 @@ export function parseAntigravityRetryTime(message) {
 }
 
 /**
+ * Parse rate limit reset time from response headers
+ * OpenAI returns x-ratelimit-reset-requests and x-ratelimit-reset-tokens
+ * @param {Headers} headers - Response headers
+ * @returns {number|null} Milliseconds until reset, or null if not found
+ */
+export function parseRateLimitResetFromHeaders(headers) {
+  if (!headers) return null;
+
+  // Try x-ratelimit-reset-tokens first (most relevant for quota)
+  const resetTokens = headers.get('x-ratelimit-reset-tokens');
+  if (resetTokens) {
+    try {
+      const resetDate = new Date(resetTokens);
+      const diffMs = resetDate.getTime() - Date.now();
+      if (diffMs > 0) return diffMs;
+    } catch {
+      // Invalid date format, continue
+    }
+  }
+
+  // Try x-ratelimit-reset-requests
+  const resetRequests = headers.get('x-ratelimit-reset-requests');
+  if (resetRequests) {
+    try {
+      const resetDate = new Date(resetRequests);
+      const diffMs = resetDate.getTime() - Date.now();
+      if (diffMs > 0) return diffMs;
+    } catch {
+      // Invalid date format, continue
+    }
+  }
+
+  // Try standard Retry-After header (seconds or HTTP-date)
+  const retryAfter = headers.get('retry-after');
+  if (retryAfter) {
+    // Try as seconds first
+    const seconds = parseInt(retryAfter, 10);
+    if (!isNaN(seconds) && seconds > 0) {
+      return seconds * 1000;
+    }
+    
+    // Try as HTTP-date
+    try {
+      const date = new Date(retryAfter);
+      const diffMs = date.getTime() - Date.now();
+      if (diffMs > 0) return diffMs;
+    } catch {
+      // Invalid date format
+    }
+  }
+
+  // Try x-ratelimit-reset (Unix timestamp in seconds)
+  const resetTimestamp = headers.get('x-ratelimit-reset');
+  if (resetTimestamp) {
+    const ts = parseInt(resetTimestamp, 10);
+    if (!isNaN(ts)) {
+      const diffMs = (ts * 1000) - Date.now();
+      if (diffMs > 0) return diffMs;
+    }
+  }
+
+  return null;
+}
+
+/**
  * Parse upstream provider error response
  * @param {Response} response - Fetch response from provider
- * @param {string} provider - Provider name (for Antigravity-specific parsing)
+ * @param {string} provider - Provider name (for provider-specific parsing)
  * @returns {Promise<{statusCode: number, message: string, retryAfterMs: number|null}>}
  */
 export async function parseUpstreamError(response, provider = null) {
@@ -112,8 +177,11 @@ export async function parseUpstreamError(response, provider = null) {
   const messageStr = typeof message === "string" ? message : JSON.stringify(message);
   const finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
-  // Parse Antigravity-specific retry time from error message
-  if (provider === "antigravity" && response.status === 429) {
+  // Parse retry time from headers (works for OpenAI/Codex and others)
+  retryAfterMs = parseRateLimitResetFromHeaders(response.headers);
+
+  // Fallback: Parse Antigravity-specific retry time from error message
+  if (!retryAfterMs && provider === "antigravity" && response.status === 429) {
     retryAfterMs = parseAntigravityRetryTime(finalMessage);
   }
 
@@ -139,7 +207,7 @@ export function createErrorResult(statusCode, message, retryAfterMs = null) {
     response: errorResponse(statusCode, message)
   };
   
-  // Add retryAfterMs if available (for Antigravity quota errors)
+  // Add retryAfterMs if available
   if (retryAfterMs) {
     result.retryAfterMs = retryAfterMs;
   }

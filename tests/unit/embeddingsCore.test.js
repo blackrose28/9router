@@ -482,6 +482,24 @@ describe("handleEmbeddingsCore — provider error handling", () => {
     expect(result.status).toBe(429);
   });
 
+  it("provider 429 with Retry-After header propagates retryAfterMs", async () => {
+    vi.mocked(fetch).mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: "Rate limit exceeded" } }), {
+        status: 429,
+        headers: {
+          "Content-Type": "application/json",
+          "Retry-After": "90",
+        },
+      })
+    );
+
+    const result = await handleEmbeddingsCore(makeOptions());
+
+    expect(result.success).toBe(false);
+    expect(result.status).toBe(429);
+    expect(result.retryAfterMs).toBe(90000);
+  });
+
   it("provider 500 → returns success=false with status 500", async () => {
     vi.mocked(fetch).mockResolvedValueOnce(makeProviderErrorResponse(500, "Internal error"));
 
