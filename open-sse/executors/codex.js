@@ -3,15 +3,26 @@ import { BaseExecutor } from "./base.js";
 import { CODEX_DEFAULT_INSTRUCTIONS } from "../config/codexInstructions.js";
 import { PROVIDERS } from "../config/providers.js";
 import { normalizeResponsesInput } from "../translator/helpers/responsesApiHelper.js";
-import { getConsistentMachineId } from "../../src/shared/utils/machineId.js";
+import { refreshCodexToken } from "../services/tokenRefresh.js";
+import machineIdPkg from "node-machine-id";
+const { machineIdSync } = machineIdPkg;
 
 // In-memory map: hash(machineId + first assistant content) → { sessionId, lastUsed }
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour
 const assistantSessionMap = new Map();
 
-// Cache machine ID at module level (resolved once)
+// Cache machine ID at module level (synchronous initialization)
 let cachedMachineId = null;
-getConsistentMachineId().then(id => { cachedMachineId = id; });
+try {
+  const rawMachineId = machineIdSync();
+  const saltValue = process.env.MACHINE_ID_SALT || 'endpoint-proxy-salt';
+  cachedMachineId = createHash('sha256')
+    .update(rawMachineId + saltValue)
+    .digest('hex')
+    .substring(0, 16);
+} catch (error) {
+  console.warn('Failed to get machine ID for Codex session:', error.message);
+}
 
 function hashContent(text) {
   return createHash("sha256").update(text).digest("hex").slice(0, 16);
@@ -85,6 +96,19 @@ export class CodexExecutor extends BaseExecutor {
     const headers = super.buildHeaders(credentials, stream);
     headers["session_id"] = this._currentSessionId || credentials?.connectionId || "default";
     return headers;
+  }
+
+  async refreshCredentials(credentials, log) {
+    if (!credentials?.refreshToken) return null;
+
+    const refreshed = await refreshCodexToken(credentials.refreshToken, log);
+    if (!refreshed?.accessToken) return null;
+
+    return {
+      accessToken: refreshed.accessToken,
+      refreshToken: refreshed.refreshToken || credentials.refreshToken,
+      expiresIn: refreshed.expiresIn,
+    };
   }
 
   /**
