@@ -48,27 +48,6 @@ export const DEFAULT_RETRY_CONFIG = {
   502: 1    // Bad gateway - retry 1 time (transient)
 };
 
-// Exponential backoff config for rate limits
-export const BACKOFF_CONFIG = {
-  base: 1000,
-  max: 2 * 60 * 1000,
-  maxLevel: 15
-};
-
-// Error-based cooldown times
-export const COOLDOWN_MS = {
-  unauthorized: 2 * 60 * 1000,
-  paymentRequired: 2 * 60 * 1000,
-  notFound: 2 * 60 * 1000,
-  transient: 30 * 1000,
-  requestNotAllowed: 5 * 1000,
-  quotaExhausted: 6 * 60 * 60 * 1000,  // 6 hours for quota exhaustion (covers 5h rolling window + buffer)
-  // Legacy aliases
-  rateLimit: 2 * 60 * 1000,
-  serviceUnavailable: 2 * 1000,
-  authExpired: 2 * 60 * 1000
-};
-
 // Requests containing these texts will bypass provider
 export const SKIP_PATTERNS = [
   "Please write a 5-10 word title for the following conversation:"

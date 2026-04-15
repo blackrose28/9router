@@ -4,8 +4,7 @@ import { CODEX_DEFAULT_INSTRUCTIONS } from "../config/codexInstructions.js";
 import { PROVIDERS } from "../config/providers.js";
 import { normalizeResponsesInput } from "../translator/helpers/responsesApiHelper.js";
 import { refreshCodexToken } from "../services/tokenRefresh.js";
-import machineIdPkg from "node-machine-id";
-const { machineIdSync } = machineIdPkg;
+import { machineIdSync } from "node-machine-id";
 
 // In-memory map: hash(machineId + first assistant content) → { sessionId, lastUsed }
 const SESSION_TTL_MS = 60 * 60 * 1000; // 1 hour

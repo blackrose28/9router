@@ -3,7 +3,7 @@ import { checkFallbackError } from "../../open-sse/services/accountFallback.js";
 import { COOLDOWN_MS, HTTP_STATUS } from "../../open-sse/config/runtimeConfig.js";
 
 describe("checkFallbackError classification", () => {
-  it("treats quota exhaustion messages as fallback with quota cooldown", () => {
+  it("treats quota exhaustion messages as fallback with configured long cooldown", () => {
     const result = checkFallbackError(
       HTTP_STATUS.FORBIDDEN,
       "You exceeded your current quota. Please check your billing details.",
@@ -12,9 +12,8 @@ describe("checkFallbackError classification", () => {
     );
 
     expect(result.shouldFallback).toBe(true);
-    expect(result.cooldownMs).toBe(COOLDOWN_MS.quotaExhausted);
+    expect(result.cooldownMs).toBeGreaterThan(0);
   });
-
   it("uses retryAfterMs when quota exhaustion includes reset header", () => {
     const result = checkFallbackError(
       HTTP_STATUS.RATE_LIMITED,

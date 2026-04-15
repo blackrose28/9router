@@ -156,8 +156,9 @@ export function parseRateLimitResetFromHeaders(headers) {
  * @param {string} provider - Provider name (for provider-specific parsing)
  * @returns {Promise<{statusCode: number, message: string, retryAfterMs: number|null}>}
  */
-export async function parseUpstreamError(response) {
+export async function parseUpstreamError(response, provider = null) {
   let message = "";
+  let retryAfterMs = null;
 
   try {
     const text = await response.text();
@@ -185,7 +186,8 @@ export async function parseUpstreamError(response) {
 
   return {
     statusCode: response.status,
-    message: finalMessage
+    message: finalMessage,
+    retryAfterMs
   };
 }
 
@@ -195,8 +197,8 @@ export async function parseUpstreamError(response) {
  * @param {string} message - Error message
  * @returns {{ success: false, status: number, error: string, response: Response }}
  */
-export function createErrorResult(statusCode, message) {
-  return {
+export function createErrorResult(statusCode, message, retryAfterMs = null) {
+  const result = {
     success: false,
     status: statusCode,
     error: message,
