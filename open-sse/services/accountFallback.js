@@ -1,4 +1,4 @@
-import { COOLDOWN_MS, BACKOFF_CONFIG, HTTP_STATUS } from "../config/runtimeConfig.js";
+import { ERROR_RULES, BACKOFF_CONFIG, TRANSIENT_COOLDOWN_MS } from "../config/errorConfig.js";
 
 /**
  * Calculate exponential backoff cooldown for rate limits (429)
@@ -12,27 +12,8 @@ export function getQuotaCooldown(backoffLevel = 0) {
 }
 
 /**
- * Check if error indicates quota exhaustion (not just rate limiting)
- * OpenAI/Codex quota errors have specific patterns
- * @param {string} errorText - Error message text
- * @returns {boolean}
- */
-function isQuotaExhaustedError(errorText) {
-  if (!errorText) return false;
-  const lowerError = typeof errorText === "string" ? errorText.toLowerCase() : JSON.stringify(errorText).toLowerCase();
-  
-  // OpenAI/Codex specific quota exhaustion patterns
-  return (
-    lowerError.includes("exceeded your current quota") ||
-    lowerError.includes("insufficient_quota") ||
-    lowerError.includes("billing details") ||
-    lowerError.includes("quota has been exceeded") ||
-    lowerError.includes("usage limit")
-  );
-}
-
-/**
  * Check if error should trigger account fallback (switch to next account)
+ * Config-driven: matches ERROR_RULES top-to-bottom (text rules first, then status)
  * @param {number} status - HTTP status code
  * @param {string} errorText - Error message text
  * @param {number} backoffLevel - Current backoff level for exponential backoff
@@ -40,119 +21,34 @@ function isQuotaExhaustedError(errorText) {
  * @returns {{ shouldFallback: boolean, cooldownMs: number, newBackoffLevel?: number }}
  */
 export function checkFallbackError(status, errorText, backoffLevel = 0, retryAfterMs = null) {
-  // Check error message FIRST - specific patterns take priority over status codes
-  if (errorText) {
-    const errorStr = typeof errorText === "string" ? errorText : JSON.stringify(errorText);
-    const lowerError = errorStr.toLowerCase();
+  const lowerError = errorText
+    ? (typeof errorText === "string" ? errorText : JSON.stringify(errorText)).toLowerCase()
+    : "";
 
-    if (lowerError.includes("no credentials")) {
-      return { shouldFallback: true, cooldownMs: COOLDOWN_MS.notFound };
-    }
-
-    if (lowerError.includes("request not allowed")) {
-      return { shouldFallback: true, cooldownMs: COOLDOWN_MS.requestNotAllowed };
-    }
-
-    // Kiro: "improperly formed request" = model not available on this account tier
-    // Treat as paymentRequired (long cooldown) so the model is locked and fallback occurs
-    if (lowerError.includes("improperly formed request")) {
-      return { shouldFallback: true, cooldownMs: COOLDOWN_MS.paymentRequired };
-    }
-
-    // Check for quota exhaustion BEFORE general rate limit check
-    // Quota exhaustion needs much longer cooldown (use actual reset time from headers)
-    if (isQuotaExhaustedError(errorStr)) {
-      // Use actual reset time from headers if available, otherwise fallback to 6 hours
-      const cooldown = retryAfterMs || COOLDOWN_MS.quotaExhausted;
-      return {
-        shouldFallback: true,
-        cooldownMs: cooldown,
-        newBackoffLevel: 0  // Reset backoff level since this is quota, not rate limit
-      };
-    }
-
-    // Rate limit keywords - exponential backoff (for temporary rate limits, not quota)
-    if (
-      lowerError.includes("rate limit") ||
-      lowerError.includes("too many requests") ||
-      lowerError.includes("capacity") ||
-      lowerError.includes("overloaded")
-    ) {
-      // Use actual reset time from headers if available, otherwise use exponential backoff
-      if (retryAfterMs) {
-        return {
-          shouldFallback: true,
-          cooldownMs: retryAfterMs,
-          newBackoffLevel: 0  // Reset since we have exact time
-        };
+  for (const rule of ERROR_RULES) {
+    // Text-based rule: match substring in error message
+    if (rule.text && lowerError && lowerError.includes(rule.text)) {
+      if (rule.backoff) {
+        if (retryAfterMs) {
+          return { shouldFallback: true, cooldownMs: retryAfterMs, newBackoffLevel: 0 };
+        }
+        const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
+        return { shouldFallback: true, cooldownMs: getQuotaCooldown(backoffLevel), newBackoffLevel: newLevel };
       }
-      
-      const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-      return {
-        shouldFallback: true,
-        cooldownMs: getQuotaCooldown(backoffLevel),
-        newBackoffLevel: newLevel
-      };
+      return { shouldFallback: true, cooldownMs: rule.cooldownMs };
     }
-  }
 
-  if (status === HTTP_STATUS.UNAUTHORIZED) {
-    return { shouldFallback: true, cooldownMs: COOLDOWN_MS.unauthorized };
-  }
-
-  // 403 Forbidden - check if it's quota exhaustion
-  if (status === HTTP_STATUS.FORBIDDEN) {
-    // If error message indicates quota exhaustion, use actual reset time or long cooldown
-    if (isQuotaExhaustedError(errorText)) {
-      const cooldown = retryAfterMs || COOLDOWN_MS.quotaExhausted;
-      return { shouldFallback: true, cooldownMs: cooldown };
+    // Status-based rule: match HTTP status code
+    if (rule.status && rule.status === status) {
+      if (rule.backoff) {
+        if (retryAfterMs) {
+          return { shouldFallback: true, cooldownMs: retryAfterMs, newBackoffLevel: 0 };
+        }
+        const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
+        return { shouldFallback: true, cooldownMs: getQuotaCooldown(backoffLevel), newBackoffLevel: newLevel };
+      }
+      return { shouldFallback: true, cooldownMs: rule.cooldownMs };
     }
-    // Otherwise treat as payment required
-    return { shouldFallback: true, cooldownMs: COOLDOWN_MS.paymentRequired };
-  }
-
-  if (status === HTTP_STATUS.PAYMENT_REQUIRED) {
-    return { shouldFallback: true, cooldownMs: COOLDOWN_MS.paymentRequired };
-  }
-
-  if (status === HTTP_STATUS.NOT_FOUND) {
-    return { shouldFallback: true, cooldownMs: COOLDOWN_MS.notFound };
-  }
-
-  // 429 - Rate limit - check if it's quota exhaustion or temporary rate limit
-  if (status === HTTP_STATUS.RATE_LIMITED) {
-    // If error message indicates quota exhaustion, use actual reset time or long cooldown
-    if (isQuotaExhaustedError(errorText)) {
-      const cooldown = retryAfterMs || COOLDOWN_MS.quotaExhausted;
-      return { shouldFallback: true, cooldownMs: cooldown };
-    }
-    
-    // Use actual reset time from headers if available, otherwise exponential backoff
-    if (retryAfterMs) {
-      return {
-        shouldFallback: true,
-        cooldownMs: retryAfterMs,
-        newBackoffLevel: 0  // Reset since we have exact time
-      };
-    }
-    
-    // Otherwise use exponential backoff for temporary rate limits
-    const newLevel = Math.min(backoffLevel + 1, BACKOFF_CONFIG.maxLevel);
-    return {
-      shouldFallback: true,
-      cooldownMs: getQuotaCooldown(backoffLevel),
-      newBackoffLevel: newLevel
-    };
-  }
-
-  // Transient errors
-  const transientStatuses = [
-    HTTP_STATUS.NOT_ACCEPTABLE, HTTP_STATUS.REQUEST_TIMEOUT,
-    HTTP_STATUS.SERVER_ERROR, HTTP_STATUS.BAD_GATEWAY,
-    HTTP_STATUS.SERVICE_UNAVAILABLE, HTTP_STATUS.GATEWAY_TIMEOUT
-  ];
-  if (transientStatuses.includes(status)) {
-    return { shouldFallback: true, cooldownMs: COOLDOWN_MS.transient };
   }
 
   // Unknown client errors are usually request-shape issues; switching accounts won't help.
@@ -161,7 +57,7 @@ export function checkFallbackError(status, errorText, backoffLevel = 0, retryAft
   }
 
   // All other errors - fallback with transient cooldown
-  return { shouldFallback: true, cooldownMs: COOLDOWN_MS.transient };
+  return { shouldFallback: true, cooldownMs: TRANSIENT_COOLDOWN_MS };
 }
 
 /**
