@@ -153,51 +153,72 @@ export function parseRateLimitResetFromHeaders(headers) {
 /**
  * Parse upstream provider error response
  * @param {Response} response - Fetch response from provider
- * @param {string} provider - Provider name (for provider-specific parsing)
- * @returns {Promise<{statusCode: number, message: string, retryAfterMs: number|null}>}
+ * @param {string|object|null} providerOrExecutor - Provider name string or executor with parseError() override
+ * @returns {Promise<{statusCode: number, message: string, retryAfterMs?: number, resetsAtMs?: number}>}
  */
-export async function parseUpstreamError(response, provider = null) {
-  let message = "";
-  let retryAfterMs = null;
-
+export async function parseUpstreamError(response, providerOrExecutor = null) {
+  let bodyText = "";
   try {
-    const text = await response.text();
-
-    try {
-      const json = JSON.parse(text);
-      message = json.error?.message || json.message || json.error || text;
-    } catch {
-      message = text;
-    }
+    bodyText = await response.text();
   } catch {
-    message = `Upstream error: ${response.status}`;
+    bodyText = "";
+  }
+
+  const executor = providerOrExecutor && typeof providerOrExecutor === "object"
+    ? providerOrExecutor
+    : null;
+  const provider = typeof providerOrExecutor === "string"
+    ? providerOrExecutor
+    : null;
+
+  // Let executor-specific parser extract provider-specific fields (e.g. codex resetsAtMs)
+  if (executor && typeof executor.parseError === "function") {
+    try {
+      const parsed = executor.parseError(response, bodyText);
+      if (parsed && typeof parsed === "object") {
+        const msg = parsed.message || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
+        const result = { statusCode: parsed.status || response.status, message: msg };
+        if (parsed.resetsAtMs) result.resetsAtMs = parsed.resetsAtMs;
+        return result;
+      }
+    } catch { /* fall through to default parsing */ }
+  }
+
+  let message = "";
+  try {
+    const json = JSON.parse(bodyText);
+    message = json.error?.message || json.message || json.error || bodyText;
+  } catch {
+    message = bodyText;
   }
 
   const messageStr = typeof message === "string" ? message : JSON.stringify(message);
   const finalMessage = messageStr || DEFAULT_ERROR_MESSAGES[response.status] || `Upstream error: ${response.status}`;
 
   // Parse retry time from headers (works for OpenAI/Codex and others)
-  retryAfterMs = parseRateLimitResetFromHeaders(response.headers);
+  let retryAfterMs = parseRateLimitResetFromHeaders(response.headers);
 
   // Fallback: Parse Antigravity-specific retry time from error message
   if (!retryAfterMs && provider === "antigravity" && response.status === 429) {
     retryAfterMs = parseAntigravityRetryTime(finalMessage);
   }
 
-  return {
+  const result = {
     statusCode: response.status,
     message: finalMessage,
-    retryAfterMs
+    retryAfterMs: retryAfterMs ?? null
   };
+  return result;
 }
 
 /**
  * Create error result for chatCore handler
  * @param {number} statusCode - HTTP status code
  * @param {string} message - Error message
- * @returns {{ success: false, status: number, error: string, response: Response }}
+ * @param {number|{retryAfterMs?: number, resetsAtMs?: number}|null} [extra] - Optional cooldown metadata
+ * @returns {{ success: false, status: number, error: string, response: Response, retryAfterMs?: number, resetsAtMs?: number }}
  */
-export function createErrorResult(statusCode, message, retryAfterMs = null) {
+export function createErrorResult(statusCode, message, extra = null) {
   const result = {
     success: false,
     status: statusCode,
@@ -205,9 +226,12 @@ export function createErrorResult(statusCode, message, retryAfterMs = null) {
     response: errorResponse(statusCode, message)
   };
 
-  // Add retryAfterMs if available
-  if (retryAfterMs) {
-    result.retryAfterMs = retryAfterMs;
+  if (typeof extra === "number") {
+    result.retryAfterMs = extra;
+    result.resetsAtMs = extra;
+  } else if (extra && typeof extra === "object") {
+    if (extra.retryAfterMs) result.retryAfterMs = extra.retryAfterMs;
+    if (extra.resetsAtMs) result.resetsAtMs = extra.resetsAtMs;
   }
 
   return result;
