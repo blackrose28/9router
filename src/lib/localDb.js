@@ -375,9 +375,13 @@ export async function createProviderConnection(data) {
   // Upsert: check existing by provider + email (oauth) or provider + name (apikey)
   let existingIndex = -1;
   if (data.authType === "oauth" && data.email) {
-    existingIndex = db.data.providerConnections.findIndex(
-      c => c.provider === data.provider && c.authType === "oauth" && c.email === data.email
-    );
+    existingIndex = db.data.providerConnections.findIndex(c => {
+      if (c.provider !== data.provider || c.authType !== "oauth" || c.email !== data.email) return false;
+      if (data.providerSpecificData?.accountId) {
+        return c.providerSpecificData?.accountId === data.providerSpecificData.accountId;
+      }
+      return true;
+    });
   } else if (data.authType === "apikey" && data.name) {
     existingIndex = db.data.providerConnections.findIndex(
       c => c.provider === data.provider && c.authType === "apikey" && c.name === data.name
