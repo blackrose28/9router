@@ -31,6 +31,10 @@ export const MEMORY_CONFIG = {
   proxyDispatchersMaxSize: 20,
 };
 
+// Fetch timeout: max wait time for upstream response header (5 minutes)
+// This does NOT limit streaming duration — only the initial connection phase
+export const FETCH_TIMEOUT_MS = 5 * 60 * 1000;
+
 // Default token limits
 export const DEFAULT_MAX_TOKENS = 64000;
 export const DEFAULT_MIN_TOKENS = 32000;

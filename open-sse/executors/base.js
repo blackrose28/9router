@@ -1,4 +1,4 @@
-import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry } from "../config/runtimeConfig.js";
+import { HTTP_STATUS, RETRY_CONFIG, DEFAULT_RETRY_CONFIG, resolveRetryEntry, FETCH_TIMEOUT_MS } from "../config/runtimeConfig.js";
 import { resolveOllamaLocalHost } from "../config/providers.js";
 import { proxyAwareFetch } from "../utils/proxyFetch.js";
 
@@ -125,13 +125,25 @@ export class BaseExecutor {
 
       if (!retryAttemptsByUrl[urlIndex]) retryAttemptsByUrl[urlIndex] = 0;
 
+      // Timeout controller: abort if upstream takes too long to respond
+      // This only covers the fetch phase (waiting for response headers),
+      // NOT the streaming body — cleared immediately after response arrives
+      const timeoutController = new AbortController();
+      const timeoutId = setTimeout(() => timeoutController.abort(), FETCH_TIMEOUT_MS);
+      const compositeSignal = signal
+        ? AbortSignal.any([signal, timeoutController.signal])
+        : timeoutController.signal;
+
       try {
         const response = await proxyAwareFetch(url, {
           method: "POST",
           headers,
           body: JSON.stringify(transformedBody),
-          signal
+          signal: compositeSignal
         }, proxyOptions);
+
+        // Response header received — clear fetch timeout (don't kill streaming)
+        clearTimeout(timeoutId);
 
         if (await tryRetry(urlIndex, response.status, `status ${response.status}`)) { urlIndex--; continue; }
 
@@ -143,8 +155,16 @@ export class BaseExecutor {
 
         return { response, url, headers, transformedBody };
       } catch (error) {
+        clearTimeout(timeoutId);
         lastError = error;
-        if (error.name === "AbortError") throw error;
+
+        // Distinguish timeout abort from client disconnect abort
+        if (error.name === "AbortError") {
+          if (timeoutController.signal.aborted) {
+            throw new Error(`Upstream timeout after ${FETCH_TIMEOUT_MS / 1000}s waiting for ${this.provider}`);
+          }
+          throw error; // Client disconnected
+        }
 
         // Map network/fetch exceptions to 502 retry config
         if (await tryRetry(urlIndex, HTTP_STATUS.BAD_GATEWAY, `network "${error.message}"`)) { urlIndex--; continue; }
