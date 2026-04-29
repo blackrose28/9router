@@ -244,7 +244,9 @@ export function initState(sourceFormat) {
       funcCallIds: {},
       funcArgsDone: {},
       funcItemDone: {},
-      completedSent: false
+      completedSent: false,
+      completedOutputItems: [],
+      nextOutputIndex: 0
     };
   }
 
