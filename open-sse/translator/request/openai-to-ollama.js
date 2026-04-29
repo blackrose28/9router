@@ -119,7 +119,7 @@ function normalizeMessages(messages) {
     }
 
     // Normal messages
-    const role = msg.role;
+    const role = msg.role === "developer" ? "system" : msg.role;
     const content = normalizeContent(msg.content);
     const images = extractImagesFromContent(msg.content);
 

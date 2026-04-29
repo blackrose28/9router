@@ -1,0 +1,57 @@
+{
+  "runnerState": "runner_running_idle",
+  "service": {
+    "pid": 3618076,
+    "startedAt": null,
+    "nextScheduledAt": "2026-04-28T09:29:12.524Z",
+    "syncIntervalSec": 300
+  },
+  "currentRun": null,
+  "lastRun": {
+    "runId": "c10a5abb-d15e-4a3e-bb6b-66f7d757b199",
+    "startedAt": "2026-04-28T09:24:12.517Z",
+    "endedAt": "2026-04-28T09:24:12.523Z",
+    "outcome": "sync_success",
+    "phase": "finalize",
+    "counts": {
+      "recordsScanned": 0,
+      "recordsValid": 0,
+      "recordsRejected": 0,
+      "createdLocal": 0,
+      "createdRemote": 0,
+      "pulledFromRemote": 0,
+      "pushedToRemote": 0,
+      "unchanged": 0,
+      "equalRevisionPayloadConflictResolved": 0
+    },
+    "rejectReasons": {
+      "missing_composite_identity": 0,
+      "missing_required_credentials": 0,
+      "missing_or_invalid_inventoryRevision": 0,
+      "inventory_key_mismatch": 0,
+      "invalid_record_shape": 0
+    },
+    "error": {
+      "category": "none",
+      "detail": null
+    }
+  },
+  "backfillSummary": {
+    "scanned": 0,
+    "patched": 0,
+    "rejected": 0,
+    "completedAt": "2026-04-27T14:58:52.743Z",
+    "ran": true,
+    "rejectReasons": {
+      "missing_composite_identity": 0,
+      "missing_required_credentials": 0,
+      "missing_or_invalid_inventoryRevision": 0,
+      "inventory_key_mismatch": 0,
+      "invalid_record_shape": 0
+    }
+  },
+  "queue": {
+    "syncNowPending": false,
+    "dryRunNextRun": false
+  }
+}

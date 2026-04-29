@@ -36,6 +36,15 @@ export class OpenCodeGoExecutor extends BaseExecutor {
   }
 
   transformRequest(model, body) {
-    return injectReasoningContent({ provider: this.provider, model, body });
+    const normalizedBody = body?.messages
+      ? {
+          ...body,
+          messages: body.messages.map((message) =>
+            message?.role === "developer" ? { ...message, role: "system" } : message
+          ),
+        }
+      : body;
+
+    return injectReasoningContent({ provider: this.provider, model, body: normalizedBody });
   }
 }
