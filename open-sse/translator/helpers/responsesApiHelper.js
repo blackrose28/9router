@@ -39,6 +39,7 @@ export function convertResponsesApiFormat(body) {
 
   // Group items by conversation turn
   let currentAssistantMsg = null;
+  let pendingReasoningContent = "";
   let pendingToolCalls = [];
   let pendingToolResults = [];
 
@@ -76,7 +77,15 @@ export function convertResponsesApiFormat(body) {
           return c;
         })
         : item.content;
-      result.messages.push({ role: item.role, content });
+      if (item.role === "assistant") {
+        currentAssistantMsg = { role: item.role, content };
+        if (pendingReasoningContent) {
+          currentAssistantMsg.reasoning_content = pendingReasoningContent;
+          pendingReasoningContent = "";
+        }
+      } else {
+        result.messages.push({ role: item.role, content });
+      }
     }
     else if (itemType === "function_call") {
       // Start or append to assistant message with tool_calls
@@ -86,6 +95,13 @@ export function convertResponsesApiFormat(body) {
           content: null,
           tool_calls: []
         };
+        if (pendingReasoningContent) {
+          currentAssistantMsg.reasoning_content = pendingReasoningContent;
+          pendingReasoningContent = "";
+        }
+      }
+      if (!Array.isArray(currentAssistantMsg.tool_calls)) {
+        currentAssistantMsg.tool_calls = [];
       }
       // Skip items with empty/missing name — upstream APIs reject nameless tool calls (#444)
       if (!item.name || typeof item.name !== "string" || item.name.trim() === "") continue;
@@ -112,8 +128,12 @@ export function convertResponsesApiFormat(body) {
       });
     }
     else if (itemType === "reasoning") {
-      // Skip reasoning items - they are for display only
-      continue;
+      const reasoningText = extractReasoningText(item);
+      if (reasoningText) {
+        pendingReasoningContent = pendingReasoningContent
+          ? `${pendingReasoningContent}\n${reasoningText}`
+          : reasoningText;
+      }
     }
   }
 
@@ -136,4 +156,14 @@ export function convertResponsesApiFormat(body) {
   delete result.reasoning;
 
   return result;
+}
+
+function extractReasoningText(item) {
+  if (typeof item?.reasoning_content === "string") return item.reasoning_content;
+  if (typeof item?.text === "string") return item.text;
+  if (!Array.isArray(item?.summary)) return "";
+  return item.summary
+    .map(part => part?.text || part?.summary_text || "")
+    .filter(Boolean)
+    .join("\n");
 }

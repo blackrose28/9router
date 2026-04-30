@@ -6,13 +6,13 @@ const PLACEHOLDER = " ";
 
 // Provider-level rules: keyed by executor.provider
 const PROVIDER_RULES = {
-  deepseek: { scope: "all" }
+  deepseek: { scope: "toolCalls" }
 };
 
 // Model-level rules: matched by predicate against model id
 const MODEL_RULES = [
   { match: m => m?.startsWith?.("kimi-"), scope: "toolCalls" },
-  { match: m => m?.startsWith?.("deepseek-"), scope: "all" }
+  { match: m => m?.startsWith?.("deepseek-"), scope: "toolCalls" }
 ];
 
 function shouldInject(message, scope) {
