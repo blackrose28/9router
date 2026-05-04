@@ -40,6 +40,45 @@ async function probeWebProvider(provider, apiKey) {
   return res.status !== 401 && res.status !== 403;
 }
 
+// Probe a media provider (tts/embedding/stt/image/video) using *Config.
+// Returns true if API key is accepted; null to skip (let default handler decide).
+async function probeMediaProvider(provider, apiKey) {
+  const p = AI_PROVIDERS[provider];
+  if (!p) return null;
+  const MEDIA_KINDS = new Set(["tts", "embedding", "stt", "image", "video", "music", "imageToText"]);
+  const kinds = p.serviceKinds || ["llm"];
+  const isMediaOnly = kinds.every((k) => MEDIA_KINDS.has(k));
+  if (!isMediaOnly) return null;
+  const cfg = p.ttsConfig || p.embeddingConfig || p.imageConfig || p.videoConfig || p.musicConfig;
+  // No probe config → best-effort accept (validate at usage time)
+  if (!cfg) return true;
+  if (p.noAuth || cfg.authType === "none") return true;
+  // Skip auth schemes that need provider-specific data
+  if (cfg.authHeader === "playht" || cfg.authHeader === "aws-sigv4") return true;
+
+  const headers = { "Content-Type": "application/json", ...(cfg.extraHeaders || {}) };
+
+  switch (cfg.authHeader) {
+    case "bearer":     headers["Authorization"] = `Bearer ${apiKey}`; break;
+    case "key":        headers["Authorization"] = `Key ${apiKey}`; break;
+    case "x-api-key":  headers["x-api-key"] = apiKey; break;
+    case "x-key":      headers["x-key"] = apiKey; break;
+    case "xi-api-key": headers["xi-api-key"] = apiKey; break;
+    case "token":      headers["Authorization"] = `Token ${apiKey}`; break;
+    case "basic":      headers["Authorization"] = `Basic ${apiKey}`; break;
+    default: return null;
+  }
+
+  const method = cfg.method || "POST";
+  const res = await fetch(cfg.baseUrl, {
+    method,
+    headers,
+    body: method === "GET" ? undefined : JSON.stringify({ input: "ping", text: "ping", prompt: "ping", model: cfg.models?.[0]?.id || "test" }),
+    signal: AbortSignal.timeout(8000),
+  });
+  return res.status !== 401 && res.status !== 403;
+}
+
 // POST /api/providers/validate - Validate API key with provider
 export async function POST(request) {
   try {
@@ -192,6 +231,15 @@ export async function POST(request) {
         });
       }
 
+      // Generic probe for tts/embedding providers (config-driven)
+      const mediaResult = await probeMediaProvider(provider, apiKey);
+      if (mediaResult !== null) {
+        return NextResponse.json({
+          valid: mediaResult,
+          error: mediaResult ? null : "Invalid API key",
+        });
+      }
+
       switch (provider) {
         case "openai":
           const openaiRes = await fetch("https://api.openai.com/v1/models", {
@@ -315,6 +363,7 @@ export async function POST(request) {
         case "assemblyai":
         case "nanobanana":
         case "chutes":
+        case "xiaomi-mimo":
         case "nvidia": {
           const endpoints = {
             deepseek: "https://api.deepseek.com/models",
@@ -334,7 +383,8 @@ export async function POST(request) {
             assemblyai: "https://api.assemblyai.com/v1/account",
             nanobanana: "https://api.nanobananaapi.ai/v1/models",
             chutes: "https://llm.chutes.ai/v1/models",
-            nvidia: "https://integrate.api.nvidia.com/v1/models"
+            nvidia: "https://integrate.api.nvidia.com/v1/models",
+            "xiaomi-mimo": "https://api.xiaomimimo.com/v1/models"
           };
           const headers = {};
           if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
